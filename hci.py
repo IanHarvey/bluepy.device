@@ -14,14 +14,26 @@ class HCIPacket:
     def __str__(self):
         return "Type=%02X Payload=%s" % (self.packetType, binascii.b2a_hex(self.payload))
 
+    def toBytes(self):
+        return bytes([self.packetType]) + self.payload
+
+    @staticmethod
+    def fromBytes(buf):
+        rv = HCIPacket(buf[0])
+        rv.payload = buf[1:]
+        return rv
+        
 class HCICommandPacket(HCIPacket):
     def __init__(self, params=b''):
         HCIPacket.__init__(self,HCI_COMMAND_PACKET)
         self.payload = struct.pack("<HH", (self.OGF<<10)|self.OCF, len(params)) + params
 
+class ReadLocalVersion(HCICommandPacket):
+    OGF = 0x04
+    OCF = 0x0001
+
 class LEControllerCommand(HCICommandPacket):
     OGF = 0x08
-
 
 class LESetEventMask(LEControllerCommand):
     OCF = 0x0001
