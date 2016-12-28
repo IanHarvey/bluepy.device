@@ -3,31 +3,32 @@ import os
 import socket
 import binascii
 import select
+import struct
 
-import hci
-
-class DummyDelegate:
-   def __init__(self):
-        pass
-
-   def onPacketReceived(self, hciskt, pkt):
-        print ("Delegate called")
-        hciskt.stop()
+import hcipacket
 
 
 class HCISocket:
     MAX_PACKET_LEN = 256
 
-    def __init__(self, devId, delegate):
+    def __init__(self, devId):
         self.devId = devId
-        self.delegate = delegate
+        self.delegate = None
         self.sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW, socket.BTPROTO_HCI)
         self.sock.bind( (devId,) )
-        self.sock.setsockopt(socket.SOL_HCI, socket.HCI_FILTER, binascii.a2b_hex("1400000020c10000000000400000"))
+        filt = struct.pack("@LLLH", # struct hci_filter
+                    0x14, # type_mask
+                    0xC120, 0x40000000, # event_mask[2]
+                    0 ) # opcode
+        self.sock.setsockopt(socket.SOL_HCI, socket.HCI_FILTER, filt)
         self.packetQueue = []
         self.poller = select.poll()
         self.poller.register(self.sock)
         self.running = False
+
+    def withDelegate(self, d):
+        self.delegate = d
+        return self
 
     def queuePacket(self, packet):
         self.packetQueue.append(packet)
@@ -55,14 +56,10 @@ class HCISocket:
                     self.sock.send( pkt.toBytes() )
                 if (evtmask & select.POLLIN):
                     pktbuf = self.sock.recv(self.MAX_PACKET_LEN)
-                    pkt = hci.HCIPacket.fromBytes(pktbuf)
+                    pkt = hcipacket.HCIPacket.fromBytes(pktbuf)
                     print ("Got:" + str(pkt))
                     self.delegate.onPacketReceived(self, pkt)
 
 
 
-if __name__ == '__main__':
-    s = HCISocket(devId=0, delegate=DummyDelegate())
-    s.queuePacket( hci.ReadLocalVersion() )
-    s.run()
 

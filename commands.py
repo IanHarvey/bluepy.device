@@ -1,38 +1,35 @@
+# Command packets
 import struct
 import binascii
 
-# Vol 4 part 4.5
-HCI_COMMAND_PACKET = 0x01
-HCI_ACL_DATA_PACKET = 0x02
-HCI_EVENT_PACKET = 0x04
+from hcipacket import HCIPacket, HCI_COMMAND_PACKET
 
-class HCIPacket:
-    def __init__(self, packetType):
-        self.packetType = packetType
-        self.payload = None
-
-    def __str__(self):
-        return "Type=%02X Payload=%s" % (self.packetType, binascii.b2a_hex(self.payload))
-
-    def toBytes(self):
-        return bytes([self.packetType]) + self.payload
-
-    @staticmethod
-    def fromBytes(buf):
-        rv = HCIPacket(buf[0])
-        rv.payload = buf[1:]
-        return rv
-        
-class HCICommandPacket(HCIPacket):
+class HCICommand:
     def __init__(self, params=b''):
-        HCIPacket.__init__(self,HCI_COMMAND_PACKET)
-        self.payload = struct.pack("<HH", (self.OGF<<10)|self.OCF, len(params)) + params
+        self.opcode = (self.OGF<<10)|self.OCF
+        self.params = params
+        self.completion = None
 
-class ReadLocalVersion(HCICommandPacket):
+    def withCompletion(self, callback):
+        self.completion = callback
+        return self
+
+    def getPacket(self):
+        return HCIPacket(HCI_COMMAND_PACKET, struct.pack("<HH", self.opcode, len(self.params)) + self.params)
+
+    def onResponse(self, payload):
+        self.parseResponse(payload)
+        if self.completion:
+            self.completion(self)
+
+    def parseResponse(self, payload):
+        print ("Currently ignoring payload (%d bytes)" % len(payload))
+
+class ReadLocalVersion(HCICommand):
     OGF = 0x04
     OCF = 0x0001
 
-class LEControllerCommand(HCICommandPacket):
+class LEControllerCommand(HCICommand):
     OGF = 0x08
 
 class LESetEventMask(LEControllerCommand):
@@ -62,8 +59,4 @@ class LESetAdvertiseEnable(LEControllerCommand):
 
 class LESetScanParameters(LEControllerCommand):
     OCF = 0x000B
-
-if __name__ == '__main__':
-    print( LESetEventMask(LESetEventMask.EVT_MASK_DEFAULT) )
-    print( LEReadBufferSize() )
 
