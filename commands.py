@@ -15,7 +15,7 @@ class HCICommand:
         return self
 
     def getPacket(self):
-        return HCIPacket(HCI_COMMAND_PACKET, struct.pack("<HH", self.opcode, len(self.params)) + self.params)
+        return HCIPacket(HCI_COMMAND_PACKET, struct.pack("<HB", self.opcode, len(self.params)) + self.params)
 
     def onResponse(self, payload):
         self.status = payload[0]
