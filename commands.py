@@ -104,19 +104,19 @@ class LESetAdvertisingParameters(LEControllerCommand):
     # TODO: add symbolic values when necessary
 
     def __init__(self,
-         interval_min = 0x0800,
-         interval_max = 0x0800,
+         interval_min = 0x00A0,
+         interval_max = 0x00A0,
          adv_type = 0,
          own_addr_type = 0,
          direct_addr_type = 0,
-         direct_addr = b'\x00\x00\x00\x00\x00\x00',
+         direct_addr = b'\x22\x33\x44\x55\x66\x77',
          adv_channel_map = 7,
          adv_filter_policy = 0):
         if len(direct_addr) != 6:
             raise ValueError("direct_addr must be 6 bytes")
-        LEControllerCommand.__init__(self, struct.pack("<HHBBBsBB",
-            (interval_min, interval_max, adv_type, own_addr_type, direct_addr_type,
-               bytes(direct_addr), adv_channel_map, adv_filter_policy) ))
+        LEControllerCommand.__init__(self, struct.pack("<HHBBB6sBB",
+            interval_min, interval_max, adv_type, own_addr_type, direct_addr_type,
+               bytes(direct_addr), adv_channel_map, adv_filter_policy ))
 
 class LESetAdvertisingData(LEControllerCommand):
     OCF = 0x0008
@@ -157,7 +157,7 @@ class LESetScanParameters(LEControllerCommand):
          own_addr_type = 0,
          scan_filter_policy = 0):
         LEControllerCommand.__init__(self, struct.pack("<BHHBB",
-            (scan_type, scan_interval, scan_window, own_addr_type, scan_filter_policy) ))
+            scan_type, scan_interval, scan_window, own_addr_type, scan_filter_policy ))
 
 class LESetScanEnable(LEControllerCommand):
     OCF = 0x000C

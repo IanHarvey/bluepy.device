@@ -4,6 +4,7 @@ import binascii
 import hcipacket
 import commands
 import events
+import gap
 
 class Device(events.EventHandler):
     def __init__(self):
@@ -50,6 +51,14 @@ class Device(events.EventHandler):
         assert (self.hciSocket is not None)
         self.startup_state = 0
         self.startup_next_state(None)
+
+        self.adv = gap.AdvertisingData()
+        self.adv.addItem(gap.GAP_FLAGS, [0x06])
+        self.adv.addItem(gap.GAP_UUID_128BIT_INCOMPLETE, b'\xF0\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF')
+        self.scn = gap.AdvertisingData()
+        self.scn.addItem(gap.GAP_NAME_INCOMPLETE, 'test'.encode('ascii'))
+        print ("adv=", binascii.b2a_hex(self.adv.data))
+        print ("scn=", binascii.b2a_hex(self.scn.data))
         return self.run()
 
     def startup_next_state(self, cmd):
@@ -64,17 +73,25 @@ class Device(events.EventHandler):
         elif (self.startup_state == 2):
             if cmd.version < commands.ReadLocalVersion.BLUETOOTH_V4_0:
                 print ("Bluetooth 4.0 unsupported")
+                self.stop()
             else:
                 nextCmd = commands.LESetEventMask(events.DEFAULT_LE_EVENT_MASK)
         elif (self.startup_state == 3):
             nextCmd = commands.WriteLEHostSupported(commands.WriteLEHostSupported.LE_ENABLE, commands.WriteLEHostSupported.LE_SIMUL_DISABLE)
+        elif (self.startup_state == 4):
+            nextCmd = commands.LESetAdvertisingParameters()
+        elif (self.startup_state == 5):
+            nextCmd = commands.LESetAdvertisingData(self.adv.data)
+        elif (self.startup_state == 6):
+            nextCmd = commands.LESetScanResponseData(self.scn.data)
+        elif (self.startup_state == 7):
+            nextCmd = commands.LESetAdvertiseEnable(commands.LESetAdvertiseEnable.ENABLE)
 
         if nextCmd:
             self.startup_state += 1
             self.queueCommand(nextCmd.withCompletion(self.startup_next_state))
         else:
-            print ("Stopping")
-            self.stop()
+            print ("All done")
 
 if __name__ == '__main__':
     from hcisocket_linux import HCISocket
