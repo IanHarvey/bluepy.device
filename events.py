@@ -35,15 +35,34 @@ class EventHandler:
         if len(data) != dlen+2:
             print ("Invalid length %d in packet: %s" % (dlen, binascii.b2a_hex(data).decode('ascii')))
             return
+
         if eventCode == E_CMD_RESPONSE:
             (n_cmds, opcode) = struct.unpack("<BH", data[2:5])
-            self.onCommandResponse(n_cmds, opcode, data[5:])
-        else:
-            print ("Unhandled event")
+            return self.onCommandResponse(n_cmds, opcode, data[5:])
+        elif eventCode == E_LE_META_EVENT:
+            subEvent = data[2]
+            if subEvent == E_LE_CONN_COMPLETE:
+                (status, handle, role, peerAddrType, peerAddr, interval, 
+                   latency, timeout, masterClock) = struct.unpack("<BHBB6sHHHB", data[3:])
+                if status != 0:
+                    return self.onConnectionFailed(status, peerAddrType, peerAddr)
+                elif role == 0x00:
+                    return self.onMasterConnected(handle, peerAddrType, peerAddr)
+                elif role == 0x01:
+                    return self.onSlaveConnected(handle, peerAddrType, peerAddr)
+            
+        print ("Unhandled event")
 
     # Stub event handlers   
     def onCommandResponse(self, n_cmds, opcode, params):
         pass
 
+    def onConnectionFailed(self, status, peerAddrType, peerAddr):
+        pass
 
+    def onMasterConnected(self, handle, peerAddrType, peerAddr):
+        pass
+
+    def onSlaveConnected(self, handle, peerAddrType, peerAddr):
+        pass
 

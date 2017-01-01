@@ -5,6 +5,7 @@ import hcipacket
 import commands
 import events
 import gap
+import gatt
 
 class Device(events.EventHandler):
     def __init__(self):
@@ -34,6 +35,10 @@ class Device(events.EventHandler):
         print ("Delegate called: " + str(pkt))
         if pkt.packetType == hcipacket.HCI_EVENT_PACKET:
             self.onEventReceived(pkt.payload) # Handled by events.EventHandler mixin
+        elif pkt.packetType == hcipacket.HCI_ACL_DATA_PACKET:
+            chan = pkt.getAclChannel()
+            # FIXME - look up by channel
+            self.connection.onReceivedData(pkt.payload)
         else:
             print ("Unhandled packet")
 
@@ -45,12 +50,16 @@ class Device(events.EventHandler):
         else:
             print ("Unhandled opcode 0x%04X" % opcode)
 
+    def onSlaveConnected(self, handle, peerAddrType, peerAddr):
+        print ("Slave connected, handle=0x%04X" % handle)
+        self.connection = (hcipacket.ACLConnection(handle)
+                              .withChannel(gatt.CID_GATT, self.gatt.onMessageReceived)
+                           ) # FIXME. put in dict
+
     # Various bits of state machine
 
     def start(self):
         assert (self.hciSocket is not None)
-        self.startup_state = 0
-        self.startup_next_state(None)
 
         self.adv = gap.AdvertisingData()
         self.adv.addItem(gap.GAP_FLAGS, [0x06])
@@ -59,6 +68,10 @@ class Device(events.EventHandler):
         self.scn.addItem(gap.GAP_NAME_INCOMPLETE, 'test'.encode('ascii'))
         print ("adv=", binascii.b2a_hex(self.adv.data))
         print ("scn=", binascii.b2a_hex(self.scn.data))
+        self.gatt = gatt.GattServer() # ...
+
+        self.startup_state = 0
+        self.startup_next_state(None)
         return self.run()
 
     def startup_next_state(self, cmd):
