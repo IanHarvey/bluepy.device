@@ -31,14 +31,17 @@ class HCIPacket:
 FRAG_FLAGS = 0x3000
 FRAG_FIRST = 0x2000
 FRAG_NEXT  = 0x1000
+FRAG_FIRST_HOST = 0x0000
 
 class ACLConnection:
-    def __init__(self, handle):
+    def __init__(self, sock, handle):
+        self.sock = sock
         self.handle = handle
         self.channelFns = {} # Maps channel ID to callable
         self.fragBuf = None
         self.fragCID = 0
         self.fragPktLen = 0
+        self.txMtu = 9999
 
     def withChannel(self, cid, callback):
         self.channelFns[cid] = callback
@@ -73,7 +76,31 @@ class ACLConnection:
     def onPacketComplete(self, cid, data):
         if cid in self.channelFns:
             print ("Dispatch %d bytes to CID %d" % (len(data), cid))
-            return self.channelFns[cid](self.handle, data)
+            return self.channelFns[cid](self, cid, data)
         else:
             print ("Dropping data with CID=%d" % cid)
+
+    def send(self, cid, data):
+        # FIXME: what is MTU here?
+        dlen = len(data)
+        if dlen <= self.txMtu - 8:
+            payload = struct.pack("<HHHH", FRAG_FIRST_HOST | self.handle,
+                dlen+4, dlen, cid) + data
+            self.sock.queuePacket(HCIPacket(HCI_ACL_DATA_PACKET, payload))
+        else:
+            pdu = struct.pack("<HH", dlen, cid) + data
+            pos = 0
+            remain = len(pdu)
+            flags = FRAG_FIRST_HOST | self.handle
+            while remain > 0:
+                n = min(remain, self.txMtu-4)
+                payload = struct.pack("<HH", flags, n) + data[pos : pos+n]
+                self.sock.queuePacket(HCIPacket(HCI_ACL_DATA_PACKET, payload))
+                flags = FRAG_NEXT | self.handle
+                pos += n
+                remain -= n
+
+
+                
+                
 

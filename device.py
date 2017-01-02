@@ -52,7 +52,7 @@ class Device(events.EventHandler):
 
     def onSlaveConnected(self, handle, peerAddrType, peerAddr):
         print ("Slave connected, handle=0x%04X" % handle)
-        self.connection = (hcipacket.ACLConnection(handle)
+        self.connection = (hcipacket.ACLConnection(self.hciSocket, handle)
                               .withChannel(gatt.CID_GATT, self.gatt.onMessageReceived)
                            ) # FIXME. put in dict
 
@@ -80,24 +80,26 @@ class Device(events.EventHandler):
             print ("Error from command (opc=0x%04X) : %s" % (cmd.opcode, cmd.error()))
             self.stop()
         elif (self.startup_state == 0):
-            nextCmd = commands.SetEventMask(events.DEFAULT_EVENT_MASK)
+            nextCmd = commands.Reset()
         elif (self.startup_state == 1):
-            nextCmd = commands.ReadLocalVersion()
+            nextCmd = commands.SetEventMask(events.DEFAULT_EVENT_MASK)
         elif (self.startup_state == 2):
+            nextCmd = commands.ReadLocalVersion()
+        elif (self.startup_state == 3):
             if cmd.version < commands.ReadLocalVersion.BLUETOOTH_V4_0:
                 print ("Bluetooth 4.0 unsupported")
                 self.stop()
             else:
                 nextCmd = commands.LESetEventMask(events.DEFAULT_LE_EVENT_MASK)
-        elif (self.startup_state == 3):
-            nextCmd = commands.WriteLEHostSupported(commands.WriteLEHostSupported.LE_ENABLE, commands.WriteLEHostSupported.LE_SIMUL_DISABLE)
         elif (self.startup_state == 4):
-            nextCmd = commands.LESetAdvertisingParameters()
+            nextCmd = commands.WriteLEHostSupported(commands.WriteLEHostSupported.LE_ENABLE, commands.WriteLEHostSupported.LE_SIMUL_DISABLE)
         elif (self.startup_state == 5):
-            nextCmd = commands.LESetAdvertisingData(self.adv.data)
+            nextCmd = commands.LESetAdvertisingParameters()
         elif (self.startup_state == 6):
-            nextCmd = commands.LESetScanResponseData(self.scn.data)
+            nextCmd = commands.LESetAdvertisingData(self.adv.data)
         elif (self.startup_state == 7):
+            nextCmd = commands.LESetScanResponseData(self.scn.data)
+        elif (self.startup_state == 8):
             nextCmd = commands.LESetAdvertiseEnable(commands.LESetAdvertiseEnable.ENABLE)
 
         if nextCmd:

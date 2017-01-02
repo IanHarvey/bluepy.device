@@ -27,7 +27,6 @@ E_INSUFF_ENCRYPTION   = 0x0F
 E_UNSUPPORTED_GROUP_T = 0x10
 E_INSUFF_RESOURCES    = 0x11
 
-
 class Command:
     opcode = None
 
@@ -44,6 +43,12 @@ class Command:
 
 class ExchangeMTU(Command):
     opcode = 0x02
+
+    def execute(self, params):
+        theirMTU = struct.unpack("<BH", params)[1]
+        self.server.mtu = min(theirMTU, self.server.mtu)
+        print ("MTU now %d" % self.server.mtu)
+        return struct.pack("<BH", 0x03, self.server.mtu)
 
 class FindInformation(Command):
     opcode = 0x04
@@ -75,6 +80,7 @@ class GattServer:
         self.services = []
         self.handles = {}
         self.cmdDispatch = {}
+        self.mtu = 9999
         for cmdclass in [
            ExchangeMTU, 
            FindInformation, FindByTypeValue,
@@ -84,16 +90,17 @@ class GattServer:
             cmd = cmdclass(self)
             self.cmdDispatch[cmd.opcode] = cmd
 
-    def onMessageReceived(self, handle, data):
+    def onMessageReceived(self, aclconn, cid, data):
         # Use as channel callback for hcipacket.ACLConnection
         opcode = data[0]
         if opcode in self.cmdDispatch:
-            print ("Dispatch opcode %s", self.cmdDispatch[opcode])
+            print ("Dispatch opcode %s" % self.cmdDispatch[opcode])
             resp = self.cmdDispatch[opcode].execute(data)
         else:
             print ("Unknown opcode 0x%02X" % opcode)
             resp = Command(self, opcode).error(E_REQ_NOT_SUPPORTED)
         print ("Resp is %s" % resp)
+        aclconn.send(cid, resp)
 
 if __name__ == '__main__':
     r=GattServer()

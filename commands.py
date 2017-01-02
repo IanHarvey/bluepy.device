@@ -59,6 +59,9 @@ class SetEventMask(HCIControllerCommand):
     def __init__(self, eventMask):
         HCIControllerCommand.__init__(self, struct.pack("<Q", eventMask))
 
+class Reset(HCIControllerCommand):
+    OCF = 0x0003
+
 class WriteLEHostSupported(HCIControllerCommand):
     OCF = 0x006D
 
