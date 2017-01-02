@@ -50,6 +50,9 @@ class EventHandler:
                     return self.onMasterConnected(handle, peerAddrType, peerAddr)
                 elif role == 0x01:
                     return self.onSlaveConnected(handle, peerAddrType, peerAddr)
+        elif eventCode == E_DISCONN_COMPLETE:
+            (status, handle, reason) = struct.unpack("<BHB", data[2:])
+            return self.onDisconnect(status, handle, reason) 
             
         print ("Unhandled event")
 
@@ -64,5 +67,8 @@ class EventHandler:
         pass
 
     def onSlaveConnected(self, handle, peerAddrType, peerAddr):
+        pass
+
+    def onDisconnect(self, status, handle, reason):
         pass
 

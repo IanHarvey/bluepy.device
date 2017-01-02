@@ -100,7 +100,7 @@ class ACLConnection:
                 pos += n
                 remain -= n
 
+    def onDisconnect(self, reason):
+        print ("Handle 0x%04X disconnecting, reason 0x%02X" % (self.handle, reason))
 
-                
-                
 

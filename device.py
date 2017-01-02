@@ -11,6 +11,7 @@ class Device(events.EventHandler):
     def __init__(self):
         self.commandMap = {}  # Maps opcode to command objects
         self.hciSocket = None
+        self.connection = None
 
     def withSocket(self, sock):
         self.hciSocket = sock.withDelegate(self)
@@ -35,7 +36,7 @@ class Device(events.EventHandler):
         print ("Delegate called: " + str(pkt))
         if pkt.packetType == hcipacket.HCI_EVENT_PACKET:
             self.onEventReceived(pkt.payload) # Handled by events.EventHandler mixin
-        elif pkt.packetType == hcipacket.HCI_ACL_DATA_PACKET:
+        elif pkt.packetType == hcipacket.HCI_ACL_DATA_PACKET and self.connection is not None:
             chan = pkt.getAclChannel()
             # FIXME - look up by channel
             self.connection.onReceivedData(pkt.payload)
@@ -55,6 +56,15 @@ class Device(events.EventHandler):
         self.connection = (hcipacket.ACLConnection(self.hciSocket, handle)
                               .withChannel(gatt.CID_GATT, self.gatt.onMessageReceived)
                            ) # FIXME. put in dict
+
+    def onDisconnect(self, status, handle, reason):
+        if status != 0x00:
+            print ("Disconnect failed (err=0x%02X)" % status)
+        elif self.connection is None or handle != self.connection.handle:
+            print ("Disconnect when apparently not connected? handle=0x%04X" % handle)
+        else:
+            self.connection.onDisconnect(reason)
+        
 
     # Various bits of state machine
 
