@@ -5,10 +5,19 @@ import uuid
 
 CID_GATT = 0x04
 
+# Core 4.0 Spec, Vol 3 Part G, 3.4
+
 UUID_PRIMARY_SERVICE     = 0x2800
 UUID_SECONDARY_SERVICE   = 0x2801
 UUID_INCLUDE_DEFINITION  = 0x2802
 UUID_CHARACTERISTIC_DECL = 0x2803
+
+UUID_CHAR_XTD_PROPERTIES = 0x2900
+UUID_CHAR_USER_DESC      = 0x2901
+UUID_CHAR_CLIENT_CONFIG  = 0x2902
+UUID_CHAR_SERVER_CONFIG  = 0x2903
+UUID_CHAR_FORMAT_DESC    = 0x2904
+UUID_CHAR_AGG_FORMAT_DESC= 0x2905
 
 # TODO: move to uuid.py?
 def getShortForm(uid):
@@ -20,11 +29,11 @@ def getShortForm(uid):
        return uid[2:4]
     return uid
 
-# Base attribute class
+# Base attribute class, usable for read-only attributes
 class Attribute:
-    def __init__(self, att_type, value):
+    def __init__(self, att_type, value=None):
         self.handle = None
-        self.typeUUID = UUID(att_type)
+        self.typeUUID = uuid.UUID(att_type)
         self.value = value
 
     def setHandle(self, hnd):
@@ -36,70 +45,131 @@ class Attribute:
     def isWriteable(self):
         return False
 
-    def setValue(self):
-        pass
+    def setValue(self, value):
+        if self.value is not None:
+            raise ValueError("Can only set attribute value once")
+        self.value = value
+        
+    def __str__(self):
+        if self.value is None:
+            valstr = "<unset>"
+        else:
+            valstr = binascii.b2a_hex(self.value).decode("ascii")
+        return ("Attr hnd=0x%04X UUID=%s val=%s" % (self.handle, self.typeUUID.getCommonName(),
+                   valstr ) )
 
+# Characteristics --------------------
+
+# Core 4.0 Spec, Vol 3 Part G, 3.1
+
+PROPS_BROADCAST  = 0x01
+PROPS_READ       = 0x02
+PROPS_WRITE_NOACK= 0x04
+PROPS_WRITE      = 0x08
+PROPS_NOTIFY     = 0x10
+PROPS_INDICATE   = 0x20
+PROPS_AUTH_WRITE = 0x40
+PROPS_EXTENDED   = 0x80
 
 class CharacteristicBase:
     def __init__(self):
-       self.charDesc = None
-       self.value = None
-       self.descriptors = []
+        self.charDecl = Attribute(UUID_CHARACTERISTIC_DECL)
+        self.value = None
+        self.descriptors = []
+        self.properties = PROPS_READ
 
-    def withValueAttrib(self, valAttr): 
-       self.value = valAttr
-       self.charDesc = Attribute(UUID_CHARACTERISTIC_DECL, getShortForm(valAttr.typeUUID))
-       return self
+    def withValueAttrib(self, valueAttr): 
+        self.value = valueAttr
+        return self
 
     def withDescriptor(self, desc):
-       self.descriptors.append(desc)
-       return self
+        self.descriptors.append(desc)
+        return self
 
+    def withProperties(self, properties):
+        self.properties = properties
+        
     # TODO: create convenience wrappers for various descriptors
 
     def getAttributeList(self):
-       # Called after all construction is complete
-       assert self.value is not None
-       return [ self.charDesc, self.value ] + self.descriptors
+        # Called after all construction is complete
+        assert self.value is not None
+        return [ self.charDecl, self.value ] + self.descriptors
+       
+    def getEndHandle(self):
+        if len(self.descriptors) > 0:
+            return self.descriptors[-1].handle
+        return self.value.handle
+        
+    def configure(self):
+        self.charDecl.setValue ( struct.pack("<BH", self.properties, self.value.handle) +
+                                   getShortForm(self.value.typeUUID) )
 
 class ReadOnlyCharacteristic(CharacteristicBase):
     def __init__(self, charUUID, value):
         valAttr = Attribute(charUUID, value)
-        return CharacteristicBase.__init__(self).withValueAttrib(valAttr)
+        CharacteristicBase.__init__(self)
+        self.withValueAttrib(valAttr)
 
 class Service():
     def __init__(self):
-       self.svcDesc = None
-       self.includes = []  # Attribute objects
-       self.characteristics = [] # Characteristic objects
+        self.svcDefn = None
+        self.includes = []  # Service objects
+        self.includeAttrs = [] # Descriptors for included services
+        self.characteristics = [] # Characteristic objects
 
     def withPrimaryUUID(self, uid):
-       self.svcUUID = uid
-       self.svcDesc = Attribute(UUID_PRIMARY_SERVICE, getShortForm(uid))
-       return self
+        self.UUID = uid
+        self.svcDefn = Attribute(UUID_PRIMARY_SERVICE, getShortForm(uid))
+        return self
 
     def withSecondaryUUID(self, uid):
-       self.svcUUID = uid
-       self.svcDesc = Attribute(UUID_SECONDARY_SERVICE, getShortForm(uid))
-       return self
+        self.UUID = uid
+        self.svcDefn = Attribute(UUID_SECONDARY_SERVICE, getShortForm(uid))
+        return self
 
     def withIncludedService(self, svc):
-       attr = Attribute(UUID_INCLUDE_DEFINITION, getShortForm(svc.svcUUID))
-       # FIXME - is this correct?
-       self.includes.append(attr)
-       return self
+        self.includes.append(svc)
+        # Add placeholder attribute, will set value during configure()
+        self.includeAttrs.append(Attribute(UUID_INCLUDE_DEFINITION))
+        return self
        
     def withCharacteristic(self, ch):
-       self.characteristics.append(ch)
-       return self
+        self.characteristics.append(ch)
+        return self
+
+    def withCharacteristics(self, chlist):
+        self.characteristics += chlist
+        return self
 
     def getAttributesList(self):
-       alist = [self.svcDesc] + self.includes
-       for ch in self.characteristics:
-           alist.append(ch.getAttributeList)
-       return alist
+        alist = [self.svcDefn] + self.includeAttrs
+        for ch in self.characteristics:
+            alist += ch.getAttributeList()
+        return alist
 
+    def getHandleRange(self):
+        # Returns first and last (i.e. End Group Handle) handles for this
+        # service definition
+        return ( self.svcDefn.handle, self.characteristics[-1].getEndHandle() )
 
+    def configure(self):
+        # All attributes of all services have their handles set at this point
+        
+        # Set values for included services
+        i=0
+        for isvc in self.includes:
+            first, last = isvc.getHandleRange()
+            uidfield = getShortForm(isvc.UUID)
+            if len(uidfield) != 2:
+                uidfield = b''
+            print (i, self.includeAttrs[i])
+            self.includeAttrs[i].setValue( struct.pack("<HH", first, last) + uidfield )
+            i += 1
+            
+        for ch in self.characteristics:
+            ch.configure()
+       
 # Error codes. Core 4.0 spec Vol 3 Part F, 3.4.1
 E_INVALID_HANDLE      = 0x01
 E_READ_NOT_PERMITTED  = 0x02
@@ -183,6 +253,23 @@ class GattServer:
             cmd = cmdclass(self)
             self.cmdDispatch[cmd.opcode] = cmd
 
+    def _configureServices(self):
+        hnd = 0x0001
+        # Set handles
+        for sv in self.services:
+            for attr in sv.getAttributesList():
+                attr.setHandle(hnd)
+                self.handles[hnd] = attr
+                hnd += 1
+        # Update data now handles are set
+        for sv in self.services:
+            sv.configure()
+                
+    def withServices(self, serviceList):
+        self.services = serviceList
+        self._configureServices()
+        return self
+
     def onMessageReceived(self, aclconn, cid, data):
         # Use as channel callback for hcipacket.ACLConnection
         opcode = data[0]
@@ -196,10 +283,26 @@ class GattServer:
         aclconn.send(cid, resp)
 
 if __name__ == '__main__':
-    r=GattServer()
-    print ( r.cmdDispatch )
-    print ( getShortForm(uuid.AssignedNumbers.weightMeasurement) )
-    print ( getShortForm(uuid.UUID("28381892")) )
-    print ( getShortForm(uuid.UUID(0x2903)) )
+    ch2 = ReadOnlyCharacteristic(uuid.AssignedNumbers.deviceName, b'My device')
+    sv2 = Service().withSecondaryUUID(uuid.UUID(0x3435)).withCharacteristic(ch2)
+    
+    ch = ReadOnlyCharacteristic(uuid.AssignedNumbers.deviceName, b'My device')
+    sv = ( Service().withPrimaryUUID(uuid.AssignedNumbers.genericAccess)
+             .withCharacteristic(ch)
+             .withIncludedService(sv2)
+         )
+
+    gs=GattServer().withServices([sv, sv2])
+    
+    def show(dd):
+        dks = list(dd.keys())
+        dks.sort()
+        for k in dks:
+            print ("0x%04X -> %s" % (k, dd[k]))
+            
+    print ("Commands")
+    show( gs.cmdDispatch )
+    print ("Handles")
+    show( gs.handles )
 
 
