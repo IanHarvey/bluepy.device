@@ -1,11 +1,103 @@
 import struct
 import binascii
+import uuid
+
 
 CID_GATT = 0x04
 
-class GattObject:
-    def __init__(self, handle):
-        self.handle = handle
+UUID_PRIMARY_SERVICE     = 0x2800
+UUID_SECONDARY_SERVICE   = 0x2801
+UUID_INCLUDE_DEFINITION  = 0x2802
+UUID_CHARACTERISTIC_DECL = 0x2803
+
+# TODO: move to uuid.py?
+def getShortForm(uid):
+    if isinstance(uid, uuid.UUID):
+       uid = uid.binVal
+    else:
+       uid = bytes(uid)
+    if uid[0] == 0 and uid[1] == 0 and uid[4:16] == uuid.short_uuid_suffix_bin:
+       return uid[2:4]
+    return uid
+
+# Base attribute class
+class Attribute:
+    def __init__(self, att_type, value):
+        self.handle = None
+        self.typeUUID = UUID(att_type)
+        self.value = value
+
+    def setHandle(self, hnd):
+        self.handle = hnd
+
+    def getValue(self):
+        return self.value
+
+    def isWriteable(self):
+        return False
+
+    def setValue(self):
+        pass
+
+
+class CharacteristicBase:
+    def __init__(self):
+       self.charDesc = None
+       self.value = None
+       self.descriptors = []
+
+    def withValueAttrib(self, valAttr): 
+       self.value = valAttr
+       self.charDesc = Attribute(UUID_CHARACTERISTIC_DECL, getShortForm(valAttr.typeUUID))
+       return self
+
+    def withDescriptor(self, desc):
+       self.descriptors.append(desc)
+       return self
+
+    # TODO: create convenience wrappers for various descriptors
+
+    def getAttributeList(self):
+       # Called after all construction is complete
+       assert self.value is not None
+       return [ self.charDesc, self.value ] + self.descriptors
+
+class ReadOnlyCharacteristic(CharacteristicBase):
+    def __init__(self, charUUID, value):
+        valAttr = Attribute(charUUID, value)
+        return CharacteristicBase.__init__(self).withValueAttrib(valAttr)
+
+class Service():
+    def __init__(self):
+       self.svcDesc = None
+       self.includes = []  # Attribute objects
+       self.characteristics = [] # Characteristic objects
+
+    def withPrimaryUUID(self, uid):
+       self.svcUUID = uid
+       self.svcDesc = Attribute(UUID_PRIMARY_SERVICE, getShortForm(uid))
+       return self
+
+    def withSecondaryUUID(self, uid):
+       self.svcUUID = uid
+       self.svcDesc = Attribute(UUID_SECONDARY_SERVICE, getShortForm(uid))
+       return self
+
+    def withIncludedService(self, svc):
+       attr = Attribute(UUID_INCLUDE_DEFINITION, getShortForm(svc.svcUUID))
+       # FIXME - is this correct?
+       self.includes.append(attr)
+       return self
+       
+    def withCharacteristic(self, ch):
+       self.characteristics.append(ch)
+       return self
+
+    def getAttributesList(self):
+       alist = [self.svcDesc] + self.includes
+       for ch in self.characteristics:
+           alist.append(ch.getAttributeList)
+       return alist
 
 
 # Error codes. Core 4.0 spec Vol 3 Part F, 3.4.1
@@ -27,6 +119,7 @@ E_INSUFF_ENCRYPTION   = 0x0F
 E_UNSUPPORTED_GROUP_T = 0x10
 E_INSUFF_RESOURCES    = 0x11
 
+# Command dispatch 
 class Command:
     opcode = None
 
@@ -104,5 +197,9 @@ class GattServer:
 
 if __name__ == '__main__':
     r=GattServer()
-    print( r.cmdDispatch )
+    print ( r.cmdDispatch )
+    print ( getShortForm(uuid.AssignedNumbers.weightMeasurement) )
+    print ( getShortForm(uuid.UUID("28381892")) )
+    print ( getShortForm(uuid.UUID(0x2903)) )
+
 
