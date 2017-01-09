@@ -208,6 +208,7 @@ class ExchangeMTU(Command):
     opcode = 0x02
 
     def execute(self, params):
+        # Vol 3 / F / 3.4.2
         theirMTU = struct.unpack("<BH", params)[1]
         self.server.mtu = min(theirMTU, self.server.mtu)
         print ("MTU now %d" % self.server.mtu)
@@ -216,27 +217,126 @@ class ExchangeMTU(Command):
 class FindInformation(Command):
     opcode = 0x04
 
+    def execute(self, params):
+        # Vol 3 / F / 3.4.3.1
+        (_, startHnd, endHnd) = struct.unpack("<BHH", params)
+        print ("Find Information %04X-%04X", startHnd, endHnd)
+        idata = b'TODO!!'
+        fmt = 0x01 # If handles and 2-byte UIDS else 0x02
+        return struct.pack("<BB", 0x05, fmt) + idata
+
 class FindByTypeValue(Command):
     opcode = 0x06
+
+    def execute(self, params):
+        # Vol 3 / F / 3.4.3.3
+        (_, startHnd, endHnd, attrType) = struct.unpack("<BHHH", params[0:7])
+        attrVal = params[7:]
+        idata = b'TODO!!'
+        return struct.pack("<B", 0x07) + idata
 
 class ReadByType(Command):
     opcode = 0x08
 
+    def execute(self, params):
+        # Vol 3 / F / 3.4.4.1
+        (_, startHnd, endHnd) = struct.unpack("<BHH", params[0:5])
+        uid = params[5:]
+        if len(uid) != 2 and len(uid) != 16:
+            return self.error(E_INVALID_PDU)
+        print ("Read By Type %04X-%04X, uid=%s" % (startHnd, endHnd, uid))
+        alen=5
+        adata = b'TODO!'
+        return struct.pack("<BB", 0x09, alen) + adata
+
 class Read(Command):
     opcode = 0x0A
+
+    def execute(self, params):
+        # Vol 3 / F / 3.4.4.3
+        (_, handle) = struct.unpack("<BH", params[0:3])
+        cdata = b'TODO!'
+        return struct.pack("<B", 0x0B) + cdata
 
 class ReadBlob(Command):
     opcode = 0x0C
 
+    def execute(self, params):
+        # Vol 3 / F / 3.4.4.5
+        (_, handle, offset) = struct.unpack("<BH", params[0:5])
+        cdata = b'TODO!'
+        return struct.pack("<B", 0x0D) + cdata
+
 class ReadMultiple(Command):
     opcode = 0x0E
+
+    def execute(self, params):
+        # Vol 3 / F / 3.4.4.7
+        cdata = b''
+        for ofs in range(1, len(params), 2):
+            hnd = struct.unpack("<H", params[ofs:ofs+2])
+            cdata += b'TODO!'
+        return struct.pack("<B", 0x0F) + cdata
+
 
 class ReadByGroupType(Command):
     opcode = 0x10
 
-class Write(Command):
+    def execute(self, params):
+        # Vol 3 / F / 3.4.4.9
+        (_, startHnd, endHnd) = struct.unpack("<BHH", params[0:5])
+        uid = params[5:]
+        if len(uid) != 2 and len(uid) != 16:
+            return self.error(E_INVALID_PDU)
+        print ("Read By Group %04X-%04X, uid=%s" % (startHnd, endHnd, uid))
+        cdata = b'TODO!'
+        alen = 5
+        return struct.pack("<BB", 0x11, alen) + cdata
+
+
+class WriteRequest(Command):
     opcode = 0x12
 
+    def execute(self, params):
+        # Vol 3 / F / 3.4.5.1
+        (_, handle) = struct.unpack("<BH", params[0:3])
+        value = params[3:]
+        print ("TODO: write hnd=%04Xh" % handle)
+        return struct.pack("<B", 0x13)
+
+class WriteCommand(Command):
+    opcode = 0x52
+
+    def execute(self, params):
+        # Vol 3 / F / 3.4.5.3
+        (_, handle) = struct.unpack("<BH", params[0:3])
+        value = params[3:]
+        print ("TODO: write hnd=%04Xh" % handle)
+        return None
+
+class PrepareWriteRequest(Command):
+    opcode = 0x16
+
+    def execute(self, params):
+        # Vol 3 / F / 3.4.6.1
+        (_, handle, offset) = struct.unpack("<BHH", params[0:5])
+        value = params[5:]
+        print ("TODO: write queued hnd=%04Xh" % handle)
+        return struct.pack("<BHH", 0x17, handle, offset) + value
+
+class ExecuteWriteRequest(Command):
+    opcode = 0x18
+
+    def execute(self, params):
+        # Vol 3 / F / 3.4.6.3
+        (_, flags) = struct.unpack("<BB", params)
+        print ("TODO: write queued executed")
+        return struct.pack("<B", 0x19)
+
+# Main GattServer object
+
+# This contains the attribute objects, and provides a command dispatcher
+# to execute GATT requests against them.
 
 class GattServer:
     def __init__(self):
@@ -248,7 +348,8 @@ class GattServer:
            ExchangeMTU, 
            FindInformation, FindByTypeValue,
            ReadByType, Read, ReadBlob, ReadMultiple, ReadByGroupType,
-           Write, #...
+           WriteRequest, WriteCommand, PrepareWriteRequest, ExecuteWriteRequest,
+           #...
            ]:
             cmd = cmdclass(self)
             self.cmdDispatch[cmd.opcode] = cmd
@@ -280,7 +381,12 @@ class GattServer:
             print ("Unknown opcode 0x%02X" % opcode)
             resp = Command(self, opcode).error(E_REQ_NOT_SUPPORTED)
         print ("Resp is %s" % resp)
-        aclconn.send(cid, resp)
+        if resp is not None:
+            aclconn.send(cid, resp)
+
+class DummyThing:
+    def send(self, cid, resp):
+        pass
 
 if __name__ == '__main__':
     ch2 = ReadOnlyCharacteristic(uuid.AssignedNumbers.deviceName, b'My device')
@@ -300,9 +406,16 @@ if __name__ == '__main__':
         for k in dks:
             print ("0x%04X -> %s" % (k, dd[k]))
             
-    print ("Commands")
-    show( gs.cmdDispatch )
+    #print ("Commands")
+    #show( gs.cmdDispatch )
     print ("Handles")
     show( gs.handles )
+
+    with open("cmds-recv.hex", "r") as fp:
+        dt = DummyThing()
+        for line in fp:
+            db = binascii.a2b_hex(line.rstrip())
+            print ("Command is: " + line.rstrip())
+            gs.onMessageReceived(dt, 0x04, db[9:])
 
 
