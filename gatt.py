@@ -51,10 +51,8 @@ class Attribute:
         self.value = value
         
     def __str__(self):
-        if self.value is None:
-            valstr = "<unset>"
-        else:
-            valstr = binascii.b2a_hex(self.value).decode("ascii")
+        v = self.getValue()
+        valstr = "<unset>" if (v is None) else binascii.b2a_hex(v).decode("ascii")
         return ("Attr hnd=0x%04X UUID=%s val=%s" % (self.handle, self.typeUUID.getCommonName(),
                    valstr ) )
 
@@ -71,9 +69,19 @@ PROPS_INDICATE   = 0x20
 PROPS_AUTH_WRITE = 0x40
 PROPS_EXTENDED   = 0x80
 
+class CharacteristicDeclaration(Attribute):
+    def __init__(self, ch):
+        Attribute.__init__(self, UUID_CHARACTERISTIC_DECL)
+        self.characteristic = ch
+
+    def getValue(self):
+        ch = self.characteristic
+        return (struct.pack("<BH", ch.properties, ch.value.handle) +
+                                   getShortForm(ch.value.typeUUID))
+
 class CharacteristicBase:
     def __init__(self):
-        self.charDecl = Attribute(UUID_CHARACTERISTIC_DECL)
+        self.charDecl = CharacteristicDeclaration(self)
         self.value = None
         self.descriptors = []
         self.properties = PROPS_READ
@@ -101,9 +109,6 @@ class CharacteristicBase:
             return self.descriptors[-1].handle
         return self.value.handle
         
-    def configure(self):
-        self.charDecl.setValue ( struct.pack("<BH", self.properties, self.value.handle) +
-                                   getShortForm(self.value.typeUUID) )
 
 class ReadOnlyCharacteristic(CharacteristicBase):
     def __init__(self, charUUID, value):
@@ -111,10 +116,23 @@ class ReadOnlyCharacteristic(CharacteristicBase):
         CharacteristicBase.__init__(self)
         self.withValueAttrib(valAttr)
 
+class IncludedServiceAttribute(Attribute):
+    def __init__(self, svc):
+        Attribute.__init__(self, UUID_INCLUDE_DEFINITION)
+        self.svc = svc
+
+    def getValue(self):
+        first, last = self.svc.getHandleRange()
+        rv = struct.pack("<HH", first, last)
+        uidfield = getShortForm(self.svc.UUID)
+        if len(uidfield) == 2:
+            return rv + uidfield
+        else:
+            return rv
+
 class Service():
     def __init__(self):
         self.svcDefn = None
-        self.includes = []  # Service objects
         self.includeAttrs = [] # Descriptors for included services
         self.characteristics = [] # Characteristic objects
 
@@ -129,9 +147,7 @@ class Service():
         return self
 
     def withIncludedService(self, svc):
-        self.includes.append(svc)
-        # Add placeholder attribute, will set value during configure()
-        self.includeAttrs.append(Attribute(UUID_INCLUDE_DEFINITION))
+        self.includeAttrs.append(IncludedServiceAttribute(svc))
         return self
        
     def withCharacteristic(self, ch):
@@ -153,22 +169,6 @@ class Service():
         # service definition
         return ( self.svcDefn.handle, self.characteristics[-1].getEndHandle() )
 
-    def configure(self):
-        # All attributes of all services have their handles set at this point
-        
-        # Set values for included services
-        i=0
-        for isvc in self.includes:
-            first, last = isvc.getHandleRange()
-            uidfield = getShortForm(isvc.UUID)
-            if len(uidfield) != 2:
-                uidfield = b''
-            print (i, self.includeAttrs[i])
-            self.includeAttrs[i].setValue( struct.pack("<HH", first, last) + uidfield )
-            i += 1
-            
-        for ch in self.characteristics:
-            ch.configure()
        
 # Error codes. Core 4.0 spec Vol 3 Part F, 3.4.1
 E_INVALID_HANDLE      = 0x01
@@ -362,9 +362,6 @@ class GattServer:
                 attr.setHandle(hnd)
                 self.handles[hnd] = attr
                 hnd += 1
-        # Update data now handles are set
-        for sv in self.services:
-            sv.configure()
                 
     def withServices(self, serviceList):
         self.services = serviceList
