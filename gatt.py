@@ -29,6 +29,14 @@ def getShortForm(uid):
        return uid[2:4]
     return uid
 
+def uuidFromShortForm(db):
+    if len(db)==2:
+        return uuid.UUID( struct.unpack("<H", db)[0] )
+    elif len(db)==16:
+        return uuid.UUID( binascii.b2a_hex(db).encode("utf-8") )
+    else:
+        return None
+
 # Base attribute class, usable for read-only attributes
 class Attribute:
     def __init__(self, att_type, value=None):
@@ -171,6 +179,7 @@ class Service():
 
        
 # Error codes. Core 4.0 spec Vol 3 Part F, 3.4.1
+E_NO_ERROR            = 0x00
 E_INVALID_HANDLE      = 0x01
 E_READ_NOT_PERMITTED  = 0x02
 E_WRITE_NOT_PERMITTED = 0x03
@@ -285,13 +294,26 @@ class ReadByGroupType(Command):
     def execute(self, params):
         # Vol 3 / F / 3.4.4.9
         (_, startHnd, endHnd) = struct.unpack("<BHH", params[0:5])
-        uid = params[5:]
-        if len(uid) != 2 and len(uid) != 16:
+        uid = uuidFromShortForm(params[5:])
+        if uid is None:
             return self.error(E_INVALID_PDU)
         print ("Read By Group %04X-%04X, uid=%s" % (startHnd, endHnd, uid))
-        cdata = b'TODO!'
-        alen = 5
-        return struct.pack("<BB", 0x11, alen) + cdata
+        (err, attrList) = self.server.searchHandles(startHnd, endHnd, uid)
+        if err != E_NO_ERROR:
+            return self.error(err)
+
+        # TODO: limit by MTU, limit by permissions
+        rdata = b''
+        reclen = None
+        for a in attrList:
+            val = a.getValue()
+            if reclen is None:
+                reclen = len(val)
+            elif reclen != len(val):
+                break
+            rdata += val
+                 
+        return struct.pack("<BB", 0x11, reclen) + rdata
 
 
 class WriteRequest(Command):
@@ -341,7 +363,7 @@ class ExecuteWriteRequest(Command):
 class GattServer:
     def __init__(self):
         self.services = []
-        self.handles = {}
+        self.handleTable = [ None ]
         self.cmdDispatch = {}
         self.mtu = 9999
         for cmdclass in [
@@ -360,7 +382,7 @@ class GattServer:
         for sv in self.services:
             for attr in sv.getAttributesList():
                 attr.setHandle(hnd)
-                self.handles[hnd] = attr
+                self.handleTable.append(attr)
                 hnd += 1
                 
     def withServices(self, serviceList):
@@ -381,6 +403,21 @@ class GattServer:
         if resp is not None:
             aclconn.send(cid, resp)
 
+    def searchHandles(self, first, last, attrType=None):
+        res = []
+        if first==0x0000 or last < first:
+            return (E_INVALID_HANDLE, res)
+        i = first
+        last = min(last, len(self.handleTable)-1)
+        while i <= last:
+            attr = self.handleTable[i]
+            if (attrType is None) or (attr.typeUUID == attrType):
+                res.append(attr)
+            i += 1
+        if len(res) == 0:
+            return (E_ATTR_NOT_FOUND, res)
+        return (E_NO_ERROR, res)
+
 class DummyThing:
     def send(self, cid, resp):
         pass
@@ -395,18 +432,15 @@ if __name__ == '__main__':
              .withIncludedService(sv2)
          )
 
-    gs=GattServer().withServices([sv, sv2])
+    chb = ReadOnlyCharacteristic(uuid.AssignedNumbers.deviceName, b'Other attr')
+    sv3 = ( Service().withPrimaryUUID(uuid.AssignedNumbers.genericAttribute)
+             .withCharacteristic(chb) )
+
+    gs=GattServer().withServices([sv, sv3, sv2])
     
-    def show(dd):
-        dks = list(dd.keys())
-        dks.sort()
-        for k in dks:
-            print ("0x%04X -> %s" % (k, dd[k]))
-            
-    #print ("Commands")
-    #show( gs.cmdDispatch )
     print ("Handles")
-    show( gs.handles )
+    for k in range(len(gs.handleTable)):
+        print ("0x%04X -> %s" % (k, gs.handleTable[k]))
 
     with open("cmds-recv.hex", "r") as fp:
         dt = DummyThing()
