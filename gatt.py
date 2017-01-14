@@ -26,7 +26,7 @@ def getShortForm(uid):
     else:
        uid = bytes(uid)
     if uid[0] == 0 and uid[1] == 0 and uid[4:16] == uuid.short_uuid_suffix_bin:
-       return uid[2:4]
+       return bytes([uid[3], uid[2]])
     return uid
 
 def uuidFromShortForm(db):
@@ -104,6 +104,7 @@ class CharacteristicBase:
 
     def withProperties(self, properties):
         self.properties = properties
+        return self
         
     # TODO: create convenience wrappers for various descriptors
 
@@ -145,6 +146,8 @@ class Service():
         self.characteristics = [] # Characteristic objects
 
     def withPrimaryUUID(self, uid):
+        if not isinstance(uid, uuid.UUID):
+            uid = uuid.UUID(uid)
         self.UUID = uid
         self.svcDefn = Attribute(UUID_PRIMARY_SERVICE, getShortForm(uid))
         return self
@@ -158,11 +161,7 @@ class Service():
         self.includeAttrs.append(IncludedServiceAttribute(svc))
         return self
        
-    def withCharacteristic(self, ch):
-        self.characteristics.append(ch)
-        return self
-
-    def withCharacteristics(self, chlist):
+    def withCharacteristics(self, *chlist):
         self.characteristics += chlist
         return self
 
@@ -306,7 +305,7 @@ class ReadByGroupType(Command):
         rdata = b''
         reclen = None
         for a in attrList:
-            val = a.getValue()
+            val = a.getValue() # FIXME: add start/end handle 3.4.4.10
             if reclen is None:
                 reclen = len(val)
             elif reclen != len(val):
@@ -399,7 +398,6 @@ class GattServer:
         else:
             print ("Unknown opcode 0x%02X" % opcode)
             resp = Command(self, opcode).error(E_REQ_NOT_SUPPORTED)
-        print ("Resp is %s" % resp)
         if resp is not None:
             aclconn.send(cid, resp)
 
@@ -418,25 +416,34 @@ class GattServer:
             return (E_ATTR_NOT_FOUND, res)
         return (E_NO_ERROR, res)
 
+# Testing code --------------------
+
+def makeTestServices():
+    ch1 = ReadOnlyCharacteristic(uuid.AssignedNumbers.deviceName, b'chrubuntu')
+    ch2 = ReadOnlyCharacteristic(uuid.AssignedNumbers.appearance, b'\x80\x00')
+    sv1 = ( Service().withPrimaryUUID(uuid.AssignedNumbers.genericAccess)
+                     .withCharacteristics(ch1,ch2) )
+
+    ch3 = ( ReadOnlyCharacteristic(uuid.AssignedNumbers.serviceChanged, b'\x00\x00\x00\x00')
+              .withProperties(32)
+              .withDescriptor(Attribute(UUID_CHAR_CLIENT_CONFIG, b'\x00\x00')) )
+    sv2 = ( Service().withPrimaryUUID(uuid.AssignedNumbers.genericAttribute)
+                     .withCharacteristics(ch3) )
+
+    ch4 = ReadOnlyCharacteristic("fffffffffffffffffffffffffffffff2", b'dynamic value')
+    ch5 = ( ReadOnlyCharacteristic("fffffffffffffffffffffffffffffff4", b'\x00')
+              .withProperties(12) )
+    sv3 = ( Service().withPrimaryUUID("fffffffffffffffffffffffffffffff0")
+              .withCharacteristics(ch4, ch5) )
+
+    return [sv1, sv2, sv3]
+
 class DummyThing:
     def send(self, cid, resp):
-        pass
+        print("Send CID=%02Xh" % cid, binascii.b2a_hex(resp).decode('ascii') )
 
 if __name__ == '__main__':
-    ch2 = ReadOnlyCharacteristic(uuid.AssignedNumbers.deviceName, b'My device')
-    sv2 = Service().withSecondaryUUID(uuid.UUID(0x3435)).withCharacteristic(ch2)
-    
-    ch = ReadOnlyCharacteristic(uuid.AssignedNumbers.deviceName, b'My device')
-    sv = ( Service().withPrimaryUUID(uuid.AssignedNumbers.genericAccess)
-             .withCharacteristic(ch)
-             .withIncludedService(sv2)
-         )
-
-    chb = ReadOnlyCharacteristic(uuid.AssignedNumbers.deviceName, b'Other attr')
-    sv3 = ( Service().withPrimaryUUID(uuid.AssignedNumbers.genericAttribute)
-             .withCharacteristic(chb) )
-
-    gs=GattServer().withServices([sv, sv3, sv2])
+    gs=GattServer().withServices(makeTestServices())
     
     print ("Handles")
     for k in range(len(gs.handleTable)):
