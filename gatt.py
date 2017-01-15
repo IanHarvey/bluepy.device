@@ -139,6 +139,9 @@ class IncludedServiceAttribute(Attribute):
         else:
             return rv
 
+# Services ------------------------------------------------
+
+
 class Service():
     def __init__(self):
         self.svcDefn = None
@@ -153,6 +156,8 @@ class Service():
         return self
 
     def withSecondaryUUID(self, uid):
+        if not isinstance(uid, uuid.UUID):
+            uid = uuid.UUID(uid)
         self.UUID = uid
         self.svcDefn = Attribute(UUID_SECONDARY_SERVICE, getShortForm(uid))
         return self
@@ -177,7 +182,7 @@ class Service():
         return ( self.svcDefn.handle, self.characteristics[-1].getEndHandle() )
 
        
-# Error codes. Core 4.0 spec Vol 3 Part F, 3.4.1
+# Error codes. Core 4.0 spec Vol 3 Part F, 3.4.1 ----------
 E_NO_ERROR            = 0x00
 E_INVALID_HANDLE      = 0x01
 E_READ_NOT_PERMITTED  = 0x02
@@ -197,7 +202,33 @@ E_INSUFF_ENCRYPTION   = 0x0F
 E_UNSUPPORTED_GROUP_T = 0x10
 E_INSUFF_RESOURCES    = 0x11
 
-# Command dispatch 
+
+# Utility functions / classes
+
+class RecordPacker:
+    # Packs one or more records of the same length into a byte block
+    
+    def __init__(self):
+        self.reclen = None
+        self.recdata = None
+        
+    def add(self, data):
+        '''Returns true if data can be added'''
+        if self.reclen == None:
+            self.recdata = data
+            self.reclen = len(data)
+            return True
+        elif self.reclen == len(data):
+            self.recdata += data
+            return True
+        else:
+            return False
+            
+    def isEmpty(self):
+        return (self.recdata is None)
+
+
+# Command dispatch. Core 4.0 spec Vol 3 Part F, 3.4.2-7 --- 
 class Command:
     opcode = None
 
@@ -210,6 +241,7 @@ class Command:
         return self.error(E_REQ_NOT_SUPPORTED)
 
     def error(self, code, handle=0x0000):
+        print("** Command error (0x%02X)" % code)
         return struct.pack("<BBHB", 0x01, self.opcode, handle, code)
 
 class ExchangeMTU(Command):
@@ -228,10 +260,24 @@ class FindInformation(Command):
     def execute(self, params):
         # Vol 3 / F / 3.4.3.1
         (_, startHnd, endHnd) = struct.unpack("<BHH", params)
-        print ("Find Information %04X-%04X", startHnd, endHnd)
-        idata = b'TODO!!'
-        fmt = 0x01 # If handles and 2-byte UIDS else 0x02
-        return struct.pack("<BB", 0x05, fmt) + idata
+        if (startHnd == 0x0000) or (endHnd < startHnd):
+            return self.error(E_INVALID_HANDLE, startHnd)
+
+        print ("Find Information %04X-%04X" % (startHnd, endHnd))
+        rp = RecordPacker()
+        hnd = startHnd
+        endHnd = min(endHnd, len(self.server.handleTable)-1)
+        while hnd <= endHnd:
+            attr = self.server.handleTable[hnd]
+            if not rp.add( struct.pack("<H", hnd) + getShortForm(attr.typeUUID) ):
+                break
+            hnd += 1
+
+        if rp.isEmpty():
+            return self.error(E_ATTR_NOT_FOUND, startHnd)
+                
+        fmt = 0x01 if ( rp.reclen==4 ) else 0x02
+        return struct.pack("<BB", 0x05, fmt) + rp.recdata
 
 class FindByTypeValue(Command):
     opcode = 0x06
@@ -249,13 +295,28 @@ class ReadByType(Command):
     def execute(self, params):
         # Vol 3 / F / 3.4.4.1
         (_, startHnd, endHnd) = struct.unpack("<BHH", params[0:5])
-        uid = params[5:]
-        if len(uid) != 2 and len(uid) != 16:
+        if (startHnd == 0x0000) or (endHnd < startHnd):
+            return self.error(E_INVALID_HANDLE, startHnd)
+            
+        uid = uuidFromShortForm(params[5:])
+        if uid is None:
             return self.error(E_INVALID_PDU)
-        print ("Read By Type %04X-%04X, uid=%s" % (startHnd, endHnd, uid))
-        alen=5
-        adata = b'TODO!'
-        return struct.pack("<BB", 0x09, alen) + adata
+
+        print ("Read by type %04X-%04X, uid=%s" % (startHnd, endHnd, uid))
+        rp = RecordPacker()
+        hnd = startHnd
+        endHnd = min(endHnd, len(self.server.handleTable)-1)
+        while hnd <= endHnd:
+            attr = self.server.handleTable[hnd]
+            if uid == attr.typeUUID:
+                if not rp.add( struct.pack("<H", hnd) + attr.getValue() ):
+                    break
+            hnd += 1
+
+        if rp.isEmpty():
+            return self.error(E_ATTR_NOT_FOUND, startHnd)
+
+        return struct.pack("<BB", 0x09, rp.reclen) + rp.recdata
 
 class Read(Command):
     opcode = 0x0A
@@ -293,26 +354,30 @@ class ReadByGroupType(Command):
     def execute(self, params):
         # Vol 3 / F / 3.4.4.9
         (_, startHnd, endHnd) = struct.unpack("<BHH", params[0:5])
+        if (startHnd == 0x0000) or (endHnd < startHnd):
+            return self.error(E_INVALID_HANDLE, startHnd)
+            
         uid = uuidFromShortForm(params[5:])
         if uid is None:
             return self.error(E_INVALID_PDU)
+            
         print ("Read By Group %04X-%04X, uid=%s" % (startHnd, endHnd, uid))
-        (err, attrList) = self.server.searchHandles(startHnd, endHnd, uid)
-        if err != E_NO_ERROR:
-            return self.error(err)
-
-        # TODO: limit by MTU, limit by permissions
-        rdata = b''
-        reclen = None
-        for a in attrList:
-            val = a.getValue() # FIXME: add start/end handle 3.4.4.10
-            if reclen is None:
-                reclen = len(val)
-            elif reclen != len(val):
+        
+        rp = RecordPacker()
+        
+        for svc in self.server.services:
+            (first, last) = svc.getHandleRange()
+            if (first < startHnd) or (svc.svcDefn.typeUUID != uid):
+                continue
+            elif first > endHnd:
                 break
-            rdata += val
-                 
-        return struct.pack("<BB", 0x11, reclen) + rdata
+            if not rp.add( struct.pack("<HH", first, last) + svc.svcDefn.getValue() ):
+                break
+
+        if rp.isEmpty():
+            return self.error(E_ATTR_NOT_FOUND, startHnd)
+            
+        return struct.pack("<BB", 0x11, rp.reclen) + rp.recdata
 
 
 class WriteRequest(Command):
@@ -322,17 +387,22 @@ class WriteRequest(Command):
         # Vol 3 / F / 3.4.5.1
         (_, handle) = struct.unpack("<BH", params[0:3])
         value = params[3:]
-        print ("TODO: write hnd=%04Xh" % handle)
-        return struct.pack("<B", 0x13)
+        
+        if handle==0x0000 or handle >= len(self.server.handleTable):
+            return self.error(E_INVALID_HANDLE, handle)
+            
+        attr = self.server.handleTable[handle]
+        if attr.isWriteable():
+            self.server.handleTable[handle].setValue(value)
+            return struct.pack("<B", 0x13)
+        else:
+            return self.error(E_WRITE_NOT_PERMITTED, handle)
 
 class WriteCommand(Command):
     opcode = 0x52
 
     def execute(self, params):
-        # Vol 3 / F / 3.4.5.3
-        (_, handle) = struct.unpack("<BH", params[0:3])
-        value = params[3:]
-        print ("TODO: write hnd=%04Xh" % handle)
+        WriteRequest.execute(self, params)
         return None
 
 class PrepareWriteRequest(Command):
@@ -401,22 +471,20 @@ class GattServer:
         if resp is not None:
             aclconn.send(cid, resp)
 
-    def searchHandles(self, first, last, attrType=None):
-        res = []
-        if first==0x0000 or last < first:
-            return (E_INVALID_HANDLE, res)
-        i = first
-        last = min(last, len(self.handleTable)-1)
-        while i <= last:
-            attr = self.handleTable[i]
-            if (attrType is None) or (attr.typeUUID == attrType):
-                res.append(attr)
-            i += 1
-        if len(res) == 0:
-            return (E_ATTR_NOT_FOUND, res)
-        return (E_NO_ERROR, res)
 
 # Testing code --------------------
+
+class DummyWriteAttribute(Attribute):
+    def __init__(self, charUUID, value=None):
+        Attribute.__init__(self, charUUID, value)
+        
+    def setValue(self, value):
+        print ("Wrote Attribute %X = %s" % (self.handle, binascii.b2a_hex(value).decode('ascii')) )
+        self.value = value
+        
+    def isWriteable(self):
+        return True
+        
 
 def makeTestServices():
     ch1 = ReadOnlyCharacteristic(uuid.AssignedNumbers.deviceName, b'chrubuntu')
@@ -426,12 +494,13 @@ def makeTestServices():
 
     ch3 = ( ReadOnlyCharacteristic(uuid.AssignedNumbers.serviceChanged, b'\x00\x00\x00\x00')
               .withProperties(32)
-              .withDescriptor(Attribute(UUID_CHAR_CLIENT_CONFIG, b'\x00\x00')) )
+              .withDescriptor(DummyWriteAttribute(UUID_CHAR_CLIENT_CONFIG, b'\x00\x00')) )
     sv2 = ( Service().withPrimaryUUID(uuid.AssignedNumbers.genericAttribute)
                      .withCharacteristics(ch3) )
 
     ch4 = ReadOnlyCharacteristic("fffffffffffffffffffffffffffffff2", b'dynamic value')
-    ch5 = ( ReadOnlyCharacteristic("fffffffffffffffffffffffffffffff4", b'\x00')
+    ch5 = ( CharacteristicBase()
+              .withValueAttrib(DummyWriteAttribute("fffffffffffffffffffffffffffffff4"))
               .withProperties(12) )
     sv3 = ( Service().withPrimaryUUID("fffffffffffffffffffffffffffffff0")
               .withCharacteristics(ch4, ch5) )
