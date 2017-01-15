@@ -324,8 +324,11 @@ class Read(Command):
     def execute(self, params):
         # Vol 3 / F / 3.4.4.3
         (_, handle) = struct.unpack("<BH", params[0:3])
-        cdata = b'TODO!'
-        return struct.pack("<B", 0x0B) + cdata
+        attr = self.server.getAttribute(handle)
+        if attr is None:
+            return self.error(E_INVALID_HANDLE, handle)
+        # TODO: MTU
+        return struct.pack("<B", 0x0B) + attr.getValue()
 
 class ReadBlob(Command):
     opcode = 0x0C
@@ -333,7 +336,11 @@ class ReadBlob(Command):
     def execute(self, params):
         # Vol 3 / F / 3.4.4.5
         (_, handle, offset) = struct.unpack("<BH", params[0:5])
-        cdata = b'TODO!'
+        attr = self.server.getAttribute(handle)
+        if attr is None:
+            return self.error(E_INVALID_HANDLE, handle)
+        cdata = attr.getValue() [ offset: ]
+        # TODO: MTU
         return struct.pack("<B", 0x0D) + cdata
 
 class ReadMultiple(Command):
@@ -343,8 +350,11 @@ class ReadMultiple(Command):
         # Vol 3 / F / 3.4.4.7
         cdata = b''
         for ofs in range(1, len(params), 2):
-            hnd = struct.unpack("<H", params[ofs:ofs+2])
-            cdata += b'TODO!'
+            handle = struct.unpack("<H", params[ofs:ofs+2])
+            attr = self.server.getAttribute(handle)
+            if attr is None:
+                return self.error(E_INVALID_HANDLE, handle)
+            cdata += attr.getValue() # Assume lengths work??
         return struct.pack("<B", 0x0F) + cdata
 
 
@@ -388,11 +398,10 @@ class WriteRequest(Command):
         (_, handle) = struct.unpack("<BH", params[0:3])
         value = params[3:]
         
-        if handle==0x0000 or handle >= len(self.server.handleTable):
+        attr = self.server.getAttribute(handle)
+        if attr is None:
             return self.error(E_INVALID_HANDLE, handle)
-            
-        attr = self.server.handleTable[handle]
-        if attr.isWriteable():
+        elif attr.isWriteable():
             self.server.handleTable[handle].setValue(value)
             return struct.pack("<B", 0x13)
         else:
@@ -471,6 +480,10 @@ class GattServer:
         if resp is not None:
             aclconn.send(cid, resp)
 
+    def getAttribute(self, handle):
+        if (handle == 0x0000) or (handle >= len(self.handleTable)):
+            return None
+        return self.handleTable[handle] 
 
 # Testing code --------------------
 
