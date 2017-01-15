@@ -449,7 +449,7 @@ if __name__ == '__main__':
     for k in range(len(gs.handleTable)):
         print ("0x%04X -> %s" % (k, gs.handleTable[k]))
 
-    with open("cmds-recv.hex", "r") as fp:
+    with open("gatt-cmds.hex", "r") as fp:
         dt = DummyThing()
         for line in fp:
             db = binascii.a2b_hex(line.rstrip())
