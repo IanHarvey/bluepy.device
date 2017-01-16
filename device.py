@@ -78,7 +78,7 @@ class Device(events.EventHandler):
         self.scn.addItem(gap.GAP_NAME_INCOMPLETE, 'test'.encode('ascii'))
         print ("adv=", binascii.b2a_hex(self.adv.data))
         print ("scn=", binascii.b2a_hex(self.scn.data))
-        self.gatt = gatt.GattServer() # ...
+        self.gatt = gatt.GattServer().withServices(gatt.makeTestServices()) # ...
 
         self.startup_state = 0
         self.startup_next_state(None)

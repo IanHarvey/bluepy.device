@@ -27,13 +27,13 @@ def getShortForm(uid):
        uid = bytes(uid)
     if uid[0] == 0 and uid[1] == 0 and uid[4:16] == uuid.short_uuid_suffix_bin:
        return bytes([uid[3], uid[2]])
-    return uid
+    return uid[::-1]
 
 def uuidFromShortForm(db):
     if len(db)==2:
         return uuid.UUID( struct.unpack("<H", db)[0] )
     elif len(db)==16:
-        return uuid.UUID( binascii.b2a_hex(db).encode("utf-8") )
+        return uuid.UUID( binascii.b2a_hex(db[::-1]).encode("utf-8") )
     else:
         return None
 
