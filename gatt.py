@@ -284,10 +284,24 @@ class FindByTypeValue(Command):
 
     def execute(self, params):
         # Vol 3 / F / 3.4.3.3
-        (_, startHnd, endHnd, attrType) = struct.unpack("<BHHH", params[0:7])
+        (_, startHnd, endHnd, attrType) = struct.unpack("<BHH", params[0:5])
+        uid = uuidFromShortForm(params[5:7])
         attrVal = params[7:]
-        idata = b'TODO!!'
-        return struct.pack("<B", 0x07) + idata
+
+        rp = RecordPacker()
+        for svc in self.server.services:
+            # Seems this cmd is only valid for discovering services
+            (first, last) = svc.getHandleRange()
+            if (first < startHnd) or (svc.svcDefn.typeUUID != uid) or (svc.svcDefn.getValue() != attrVal):
+                continue
+            elif first > endHnd:
+                break
+            rp.add( struct.pack("<HH", first, last) )
+
+        if rp.isEmpty():
+            return self.error(E_ATTR_NOT_FOUND, startHnd)
+        
+        return struct.pack("<B", 0x07) + rp.recdata
 
 class ReadByType(Command):
     opcode = 0x08
@@ -416,12 +430,35 @@ class WriteCommand(Command):
 
 class PrepareWriteRequest(Command):
     opcode = 0x16
+    
+    MAX_QUEUED_HANDLES = 4
+    MAX_WRITE_LENGTH = 1024
 
     def execute(self, params):
         # Vol 3 / F / 3.4.6.1
         (_, handle, offset) = struct.unpack("<BHH", params[0:5])
         value = params[5:]
-        print ("TODO: write queued hnd=%04Xh" % handle)
+        queue = self.server.writeQueue
+        
+        # Allow queueing of 
+        if handle not in queue:
+            if len(queue.keys()) >= MAX_QUEUED_HANDLES:
+                return self.error(E_PREPARE_Q_FULL, handle)
+            attr = self.server.getAttribute(handle)
+            if attr is None:
+                return self.error(E_INVALID_HANDLE, handle)
+            elif not attr.isWriteable():
+                return self.error(E_WRITE_NOT_PERMITTED, handle)
+                
+            if offset != 0:
+                return self.error(E_INVALID_OFFSET)
+            queue[handle] = value
+        else:
+            if ( offset != len(queue[handle]) or
+                 offset + len(value) > self.MAX_WRITE_LENGTH ):
+                return self.error(E_INVALID_OFFSET)
+            queue[handle] += value
+
         return struct.pack("<BHH", 0x17, handle, offset) + value
 
 class ExecuteWriteRequest(Command):
@@ -430,7 +467,21 @@ class ExecuteWriteRequest(Command):
     def execute(self, params):
         # Vol 3 / F / 3.4.6.3
         (_, flags) = struct.unpack("<BB", params)
-        print ("TODO: write queued executed")
+        
+        err = 0
+        if flags == 0x00:
+            self.server.writeQueue.clear()
+        elif flags == 0x01:
+            for (hnd, val) in self.server.writeQueue.items():
+                attr = self.server.getAttribute(hnd)
+                if (attr is None) or not attr.isWriteable():
+                    # What happened?
+                    err = E_WRITE_NOT_PERMITTED
+                else:
+                    attr.setValue(val)
+                     
+        if err:
+            return self.error(err)
         return struct.pack("<B", 0x19)
 
 # Main GattServer object
@@ -443,7 +494,8 @@ class GattServer:
         self.services = []
         self.handleTable = [ None ]
         self.cmdDispatch = {}
-        self.mtu = 9999
+        self.mtu = 9999 # FIXME 
+        self.writeQueue = {} # Map handle : value bytes
         for cmdclass in [
            ExchangeMTU, 
            FindInformation, FindByTypeValue,
