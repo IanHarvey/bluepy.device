@@ -284,7 +284,7 @@ class FindByTypeValue(Command):
 
     def execute(self, params):
         # Vol 3 / F / 3.4.3.3
-        (_, startHnd, endHnd, attrType) = struct.unpack("<BHH", params[0:5])
+        (_, startHnd, endHnd) = struct.unpack("<BHH", params[0:5])
         uid = uuidFromShortForm(params[5:7])
         attrVal = params[7:]
 
@@ -337,7 +337,7 @@ class Read(Command):
 
     def execute(self, params):
         # Vol 3 / F / 3.4.4.3
-        (_, handle) = struct.unpack("<BH", params[0:3])
+        (_, handle) = struct.unpack("<BH", params)
         attr = self.server.getAttribute(handle)
         if attr is None:
             return self.error(E_INVALID_HANDLE, handle)
@@ -349,7 +349,7 @@ class ReadBlob(Command):
 
     def execute(self, params):
         # Vol 3 / F / 3.4.4.5
-        (_, handle, offset) = struct.unpack("<BH", params[0:5])
+        (_, handle, offset) = struct.unpack("<BHH", params)
         attr = self.server.getAttribute(handle)
         if attr is None:
             return self.error(E_INVALID_HANDLE, handle)
@@ -364,7 +364,7 @@ class ReadMultiple(Command):
         # Vol 3 / F / 3.4.4.7
         cdata = b''
         for ofs in range(1, len(params), 2):
-            handle = struct.unpack("<H", params[ofs:ofs+2])
+            handle = struct.unpack("<H", params[ofs:ofs+2])[0]
             attr = self.server.getAttribute(handle)
             if attr is None:
                 return self.error(E_INVALID_HANDLE, handle)
@@ -442,7 +442,7 @@ class PrepareWriteRequest(Command):
         
         # Allow queueing of 
         if handle not in queue:
-            if len(queue.keys()) >= MAX_QUEUED_HANDLES:
+            if len(queue.keys()) >= self.MAX_QUEUED_HANDLES:
                 return self.error(E_PREPARE_Q_FULL, handle)
             attr = self.server.getAttribute(handle)
             if attr is None:
@@ -573,8 +573,13 @@ def makeTestServices():
     return [sv1, sv2, sv3]
 
 class DummyThing:
+    def expect(self, db):
+        self.expected = db
+
     def send(self, cid, resp):
         print("Send CID=%02Xh" % cid, binascii.b2a_hex(resp).decode('ascii') )
+        if resp != self.expected:
+            print("ERROR: expected ", self.expected)
 
 if __name__ == '__main__':
     gs=GattServer().withServices(makeTestServices())
@@ -586,8 +591,16 @@ if __name__ == '__main__':
     with open("gatt-cmds.hex", "r") as fp:
         dt = DummyThing()
         for line in fp:
-            db = binascii.a2b_hex(line.rstrip())
-            print ("Command is: " + line.rstrip())
-            gs.onMessageReceived(dt, 0x04, db[9:])
+            if (':' not in line) or (line.startswith('#')):
+                continue
+            cmd,resp = line.rstrip().split(':')
+            db = binascii.a2b_hex(cmd)
+            print ("Command is: " + cmd)
+            if resp=='-':
+                dt.expect(None)
+            else:
+                print( repr(resp) )
+                dt.expect(binascii.a2b_hex(resp))
+            gs.onMessageReceived(dt, 0x04, db)
 
 
