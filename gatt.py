@@ -37,6 +37,38 @@ def uuidFromShortForm(db):
     else:
         return None
 
+# Error codes. Core 4.0 spec Vol 3 Part F, 3.4.1 ----------
+E_NO_ERROR            = 0x00
+E_INVALID_HANDLE      = 0x01
+E_READ_NOT_PERMITTED  = 0x02
+E_WRITE_NOT_PERMITTED = 0x03
+E_INVALID_PDU         = 0x04
+E_INSUFFICIENT_AUTHN  = 0x05
+E_REQ_NOT_SUPPORTED   = 0x06
+E_INVALID_OFFSET      = 0x07
+E_INSUFFICIENT_AUTHZ  = 0x08
+E_PREPARE_Q_FULL      = 0x09
+E_ATTR_NOT_FOUND      = 0x0A
+E_ATTR_NOT_LONG       = 0x0B
+E_INSUFF_ENC_KEY_SZ   = 0x0C
+E_INVALID_ATTRIB_LEN  = 0x0D
+E_UNLIKELY_ERROR      = 0x0E
+E_INSUFF_ENCRYPTION   = 0x0F
+E_UNSUPPORTED_GROUP_T = 0x10
+E_INSUFF_RESOURCES    = 0x11
+
+
+# Utility functions / classes
+
+class CommandError(Exception):
+    def __init__(self, errcode, msg="-", handle=0):
+        self.errString = msg
+        self.errorCode = errcode
+        self.handleInError = handle
+
+    def __str__(self):
+        return "%s, handle=0x%04X" % (self.errString, self.handleInError)
+
 # Base attribute class, usable for read-only attributes
 class Attribute:
     def __init__(self, att_type, value=None):
@@ -54,9 +86,7 @@ class Attribute:
         return False
 
     def setValue(self, value):
-        if self.value is not None:
-            raise ValueError("Can only set attribute value once")
-        self.value = value
+        raise CommandError(E_WRITE_NOT_PERMITTED, "Write not permitted", self.handle)
         
     def __str__(self):
         v = self.getValue()
@@ -181,29 +211,7 @@ class Service():
         # service definition
         return ( self.svcDefn.handle, self.characteristics[-1].getEndHandle() )
 
-       
-# Error codes. Core 4.0 spec Vol 3 Part F, 3.4.1 ----------
-E_NO_ERROR            = 0x00
-E_INVALID_HANDLE      = 0x01
-E_READ_NOT_PERMITTED  = 0x02
-E_WRITE_NOT_PERMITTED = 0x03
-E_INVALID_PDU         = 0x04
-E_INSUFFICIENT_AUTHN  = 0x05
-E_REQ_NOT_SUPPORTED   = 0x06
-E_INVALID_OFFSET      = 0x07
-E_INSUFFICIENT_AUTHZ  = 0x08
-E_PREPARE_Q_FULL      = 0x09
-E_ATTR_NOT_FOUND      = 0x0A
-E_ATTR_NOT_LONG       = 0x0B
-E_INSUFF_ENC_KEY_SZ   = 0x0C
-E_INVALID_ATTRIB_LEN  = 0x0D
-E_UNLIKELY_ERROR      = 0x0E
-E_INSUFF_ENCRYPTION   = 0x0F
-E_UNSUPPORTED_GROUP_T = 0x10
-E_INSUFF_RESOURCES    = 0x11
-
-
-# Utility functions / classes
+# Utility classes -------------------------------------
 
 class RecordPacker:
     # Packs one or more records of the same length into a byte block
@@ -227,6 +235,9 @@ class RecordPacker:
     def isEmpty(self):
         return (self.recdata is None)
 
+    def trapIfEmpty(self, handle):
+        if self.recdata is None:
+            raise CommandError(E_ATTR_NOT_FOUND, "Attribute Not Found", handle)
 
 # Command dispatch. Core 4.0 spec Vol 3 Part F, 3.4.2-7 --- 
 class Command:
@@ -238,7 +249,19 @@ class Command:
             self.opcode = opc
 
     def execute(self, params):
+        print("** Command not implemented (0x%02X)" % self.opcode)
         return self.error(E_REQ_NOT_SUPPORTED)
+
+    def execute_and_trap(self, params):
+        try:
+            rv = self.execute(params)
+            return rv
+        except struct.error as e:
+            print("Unpack error (%s)" % str(e))
+            return self.error(E_INVALID_PDU)
+        except CommandError as e:
+            print("Command error (%s)" % str(e))
+            return self.error(e.errorCode, e.handleInError)
 
     def error(self, code, handle=0x0000):
         print("** Command error (0x%02X)" % code)
@@ -273,9 +296,7 @@ class FindInformation(Command):
                 break
             hnd += 1
 
-        if rp.isEmpty():
-            return self.error(E_ATTR_NOT_FOUND, startHnd)
-                
+        rp.trapIfEmpty(startHnd)
         fmt = 0x01 if ( rp.reclen==4 ) else 0x02
         return struct.pack("<BB", 0x05, fmt) + rp.recdata
 
@@ -298,9 +319,7 @@ class FindByTypeValue(Command):
                 break
             rp.add( struct.pack("<HH", first, last) )
 
-        if rp.isEmpty():
-            return self.error(E_ATTR_NOT_FOUND, startHnd)
-        
+        rp.trapIfEmpty(startHnd)
         return struct.pack("<B", 0x07) + rp.recdata
 
 class ReadByType(Command):
@@ -327,9 +346,7 @@ class ReadByType(Command):
                     break
             hnd += 1
 
-        if rp.isEmpty():
-            return self.error(E_ATTR_NOT_FOUND, startHnd)
-
+        rp.trapIfEmpty(startHnd)
         return struct.pack("<BB", 0x09, rp.reclen) + rp.recdata
 
 class Read(Command):
@@ -339,8 +356,6 @@ class Read(Command):
         # Vol 3 / F / 3.4.4.3
         (_, handle) = struct.unpack("<BH", params)
         attr = self.server.getAttribute(handle)
-        if attr is None:
-            return self.error(E_INVALID_HANDLE, handle)
         # TODO: MTU
         return struct.pack("<B", 0x0B) + attr.getValue()
 
@@ -351,8 +366,6 @@ class ReadBlob(Command):
         # Vol 3 / F / 3.4.4.5
         (_, handle, offset) = struct.unpack("<BHH", params)
         attr = self.server.getAttribute(handle)
-        if attr is None:
-            return self.error(E_INVALID_HANDLE, handle)
         cdata = attr.getValue() [ offset: ]
         # TODO: MTU
         return struct.pack("<B", 0x0D) + cdata
@@ -366,8 +379,6 @@ class ReadMultiple(Command):
         for ofs in range(1, len(params), 2):
             handle = struct.unpack("<H", params[ofs:ofs+2])[0]
             attr = self.server.getAttribute(handle)
-            if attr is None:
-                return self.error(E_INVALID_HANDLE, handle)
             cdata += attr.getValue() # Assume lengths work??
         return struct.pack("<B", 0x0F) + cdata
 
@@ -398,9 +409,7 @@ class ReadByGroupType(Command):
             if not rp.add( struct.pack("<HH", first, last) + svc.svcDefn.getValue() ):
                 break
 
-        if rp.isEmpty():
-            return self.error(E_ATTR_NOT_FOUND, startHnd)
-            
+        rp.trapIfEmpty(startHnd)
         return struct.pack("<BB", 0x11, rp.reclen) + rp.recdata
 
 
@@ -413,19 +422,17 @@ class WriteRequest(Command):
         value = params[3:]
         
         attr = self.server.getAttribute(handle)
-        if attr is None:
-            return self.error(E_INVALID_HANDLE, handle)
-        elif attr.isWriteable():
-            self.server.handleTable[handle].setValue(value)
-            return struct.pack("<B", 0x13)
-        else:
-            return self.error(E_WRITE_NOT_PERMITTED, handle)
+        self.server.handleTable[handle].setValue(value)
+        return struct.pack("<B", 0x13)
 
 class WriteCommand(Command):
     opcode = 0x52
 
     def execute(self, params):
-        WriteRequest.execute(self, params)
+        try:
+            WriteRequest.execute(self, params)
+        except CommandError as e:
+            pass
         return None
 
 class PrepareWriteRequest(Command):
@@ -445,9 +452,7 @@ class PrepareWriteRequest(Command):
             if len(queue.keys()) >= self.MAX_QUEUED_HANDLES:
                 return self.error(E_PREPARE_Q_FULL, handle)
             attr = self.server.getAttribute(handle)
-            if attr is None:
-                return self.error(E_INVALID_HANDLE, handle)
-            elif not attr.isWriteable():
+            if not attr.isWriteable():
                 return self.error(E_WRITE_NOT_PERMITTED, handle)
                 
             if offset != 0:
@@ -468,20 +473,13 @@ class ExecuteWriteRequest(Command):
         # Vol 3 / F / 3.4.6.3
         (_, flags) = struct.unpack("<BB", params)
         
-        err = 0
         if flags == 0x00:
             self.server.writeQueue.clear()
         elif flags == 0x01:
             for (hnd, val) in self.server.writeQueue.items():
                 attr = self.server.getAttribute(hnd)
-                if (attr is None) or not attr.isWriteable():
-                    # What happened?
-                    err = E_WRITE_NOT_PERMITTED
-                else:
-                    attr.setValue(val)
+                attr.setValue(val)
                      
-        if err:
-            return self.error(err)
         return struct.pack("<B", 0x19)
 
 # Main GattServer object
@@ -525,7 +523,7 @@ class GattServer:
         opcode = data[0]
         if opcode in self.cmdDispatch:
             print ("Dispatch opcode %s" % self.cmdDispatch[opcode])
-            resp = self.cmdDispatch[opcode].execute(data)
+            resp = self.cmdDispatch[opcode].execute_and_trap(data)
         else:
             print ("Unknown opcode 0x%02X" % opcode)
             resp = Command(self, opcode).error(E_REQ_NOT_SUPPORTED)
@@ -534,7 +532,7 @@ class GattServer:
 
     def getAttribute(self, handle):
         if (handle == 0x0000) or (handle >= len(self.handleTable)):
-            return None
+            raise CommandError(E_INVALID_HANDLE, "Invalid handle", handle)
         return self.handleTable[handle] 
 
 # Testing code --------------------

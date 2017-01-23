@@ -26,7 +26,15 @@
 1609000000deadbe:1709000000deadbe
 1609000300ef:1709000300ef
 1801:19
-
-
-
+# Malformed commands
+0a0c00ee:010a000004
+0a:010a000004
+# Bad handle
+0a3412:010a341201
+# Write command with bad handle
+522468ef:-
+# Write request with bad handle
+122468ef:0112246801
+# Write request for readonly handle
+120500deadbeef:0112050003
 
