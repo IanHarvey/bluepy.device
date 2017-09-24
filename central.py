@@ -64,6 +64,8 @@ class Central(events.EventHandler):
         else:
             self.connection.onDisconnect(reason)
         
+    def onAdvertisingReport(self, report):
+        print ("Reports received:" + str(report))
 
     # Various bits of state machine
 
@@ -91,7 +93,9 @@ class Central(events.EventHandler):
                 print ("Bluetooth 4.0 unsupported")
                 self.stop()
             else:
-                nextCmd = commands.LESetEventMask(events.DEFAULT_LE_EVENT_MASK)
+                lemask = events.DEFAULT_LE_EVENT_MASK
+                lemask |= events.eventMask([events.E_LE_ADVERTISING_REPORT])
+                nextCmd = commands.LESetEventMask(lemask)
         elif (self.startup_state == 4):
             nextCmd = commands.WriteLEHostSupported(commands.WriteLEHostSupported.LE_ENABLE, commands.WriteLEHostSupported.LE_SIMUL_DISABLE)
 
