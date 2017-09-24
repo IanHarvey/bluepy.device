@@ -2,6 +2,7 @@ import struct
 import binascii
 
 # HCI Events
+# Spec V4.0, Vol 2, sec 7.7
 
 E_DISCONN_COMPLETE = 0x05
 E_ENCRYPT_CHANGE = 0x08
@@ -10,8 +11,10 @@ E_CMD_STATUS = 0x0F
 E_LE_META_EVENT = 0x3E
 
 # LE Meta-event subcodes
+# Vol 2, 7.7.65
 
 E_LE_CONN_COMPLETE = 0x01
+E_LE_ADVERTISING_REPORT = 0x02
 E_LE_CONN_UPDATE_COMPLETE = 0x03
 
 def eventMask(evtList):
@@ -23,7 +26,7 @@ def eventMask(evtList):
 
 DEFAULT_EVENT_MASK = eventMask([E_DISCONN_COMPLETE, E_ENCRYPT_CHANGE, E_CMD_RESPONSE, E_CMD_STATUS, E_LE_META_EVENT])
 
-DEFAULT_LE_EVENT_MASK = eventMask([E_LE_CONN_COMPLETE, E_LE_CONN_UPDATE_COMPLETE])
+DEFAULT_LE_EVENT_MASK = eventMask([E_LE_CONN_COMPLETE, E_LE_ADVERTISING_REPORT, E_LE_CONN_UPDATE_COMPLETE])
 
 class EventHandler:
     # This is basically a mixin to do the event-handling portion of 
@@ -54,7 +57,7 @@ class EventHandler:
             (status, handle, reason) = struct.unpack("<BHB", data[2:])
             return self.onDisconnect(status, handle, reason) 
             
-        print ("Unhandled event")
+        print ("Unhandled event %02X" % eventCode)
 
     # Stub event handlers   
     def onCommandResponse(self, n_cmds, opcode, params):
