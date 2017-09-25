@@ -1,5 +1,6 @@
 import struct
 import binascii
+import gap
 
 # HCI Events
 # Spec V4.0, Vol 2, sec 7.7
@@ -103,8 +104,9 @@ class AdvertisingReport:
         self.RSSI = struct.unpack("<b", data[pos+idx:pos+idx+1])[0]
         pos += nrecs * 1
 
+        self.adv_data = gap.AdvertisingData(self.gap_data)
 
     def __str__(self):
-        return "type=%02X addrtype=%02X addr=%r RSSI=%d" % (
-            self.event_type, self.address_type, self.address, self.RSSI)
+        return "type=%02X addrtype=%02X addr=%r RSSI=%d adv=%s" % (
+            self.event_type, self.address_type, self.address, self.RSSI, self.adv_data)
 

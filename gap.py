@@ -16,11 +16,13 @@ GAP_TX_POWER = 0x0A
 class AdvertisingData:
     def __init__(self, withData=b''):
         self.data = bytes(withData)
+        self._parseData()
 
     def addItem(self, tag, value):
         newdata = self.data + struct.pack("<BB", 1+len(value), tag) + bytes(value)
         if len(newdata) <= 31:
             self.data = newdata
+            self.tags[tag] = value
         else:
             raise IndexError("Supplied advertising data too long (%d bytes total)", len(newdata))
         return self
@@ -37,7 +39,14 @@ class AdvertisingData:
                 raise IndexError("Bad length byte 0x%02X in advertising data" % ll)
             yield (tag, self.data[ofs+2:ofs+1+ll])
             ofs = ofs + 1 + ll
-            
+
+    def _parseData(self):
+        self.tags={}
+        for (tag,value) in self:
+            self.tags[tag] = value
+
+    def __str__(self):
+        return repr(self.tags) # TODO...
 
 if __name__ == '__main__':
     a = AdvertisingData().addItem(GAP_FLAGS, b'11').addItem(GAP_NAME_COMPLETE, b'ThisIsMyName')
