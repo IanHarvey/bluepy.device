@@ -152,9 +152,11 @@ class LESetScanParameters(LEControllerCommand):
 
     # TODO: add symbolic values when necessary
     # BT 4.0 spec, 7.8.10
+    PASSIVE = 0x00
+    ACTIVE = 0x01
 
     def __init__(self,
-         scan_type = 0,
+         scan_type = PASSIVE,
          scan_interval = 0x0010,
          scan_window = 0x0010,
          own_addr_type = 0,

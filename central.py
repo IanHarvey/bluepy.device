@@ -101,7 +101,7 @@ class Central(events.EventHandler):
 
         # Scan-specific stuff starts here...
         elif (self.startup_state == 5):
-            nextCmd = commands.LESetScanParameters()
+            nextCmd = commands.LESetScanParameters(scan_type=commands.LESetScanParameters.ACTIVE)
         elif (self.startup_state == 6):
             nextCmd = commands.LESetScanEnable(commands.LESetScanEnable.ENABLE)
 
