@@ -55,12 +55,12 @@ class EventHandler:
                 elif role == 0x01:
                     return self.onSlaveConnected(handle, peerAddrType, peerAddr)
             elif subEvent == E_LE_ADVERTISING_REPORT:
-                (n_reports,) = struct.unpack("<B", data[3:4])
-                rawdata = data[4:]
-                for idx in range(n_reports):
-                    rv = self.onAdvertisingReport( AdvertisingReport(idx, n_reports, rawdata) )
-                    if rv:
-                        return rv
+                n_reports = data[3]
+                pos = 4
+                for i in range(n_reports):
+                    report = AdvertisingReport()
+                    pos = report.parseData(data, pos)
+                    self.onAdvertisingReport(report)
                 return
         elif eventCode == E_DISCONN_COMPLETE:
             (status, handle, reason) = struct.unpack("<BHB", data[2:])
@@ -88,23 +88,16 @@ class EventHandler:
         pass
 
 class AdvertisingReport:
-    def __init__(self, idx, nrecs, data):
-        pos = 0
-        self.event_type = struct.unpack("<B", data[pos+idx:pos+idx+1])[0]
-        pos += nrecs*1
-        self.address_type = struct.unpack("<B", data[pos+idx:pos+idx+1])[0]
-        pos += nrecs*1
-        self.address = data[pos+idx*6:pos+idx*6+6] # TODO: what type here?
-        pos += nrecs*6
-        self.length_data = struct.unpack("<B", data[pos+idx:pos+idx+1])[0]
-        pos += nrecs*1
-        ld = self.length_data
-        self.gap_data = data[pos+idx*ld:pos+idx*ld+ld] # TODO: make GAP data
-        pos += nrecs*ld # All recs have same length, yes??
-        self.RSSI = struct.unpack("<b", data[pos+idx:pos+idx+1])[0]
-        pos += nrecs * 1
+    def __init__(self):
+        self.event_type = self.address_type = self.address = self.gap_data = None
 
+    def parseData(self, data, pos):
+        hdr = struct.unpack("<BB6sB", data[pos:pos+9])
+        (self.event_type, self.address_type, self.address, datalen) = hdr
+        self.gap_data = data[pos+9:pos+9+datalen]
+        self.RSSI = struct.unpack("<b", data[pos+9+datalen:pos+10+datalen])[0]
         self.adv_data = gap.AdvertisingData(self.gap_data)
+        return pos+10+datalen
 
     def __str__(self):
         return "type=%02X addrtype=%02X addr=%r RSSI=%d adv=%s" % (
