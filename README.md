@@ -33,4 +33,7 @@ Note there isn't yet a proper API for making your own device, you'll
 have to hack `device.py`. Lots of stuff (notifications, security, ...)
 isn't implemented yet.
 
+File `central.py` has a prototype Central implementation as a pure 
+Python stack talking to the HCI interface. It currently does basic
+scanning.
 
